@@ -27,12 +27,13 @@ if 'progress' not in st.session_state:
     st.session_state.progress = {f'H{i}': '🔴' for i in range(1, 6)} 
     st.session_state.journal = []
     st.session_state.lab_results = {}
-    st.session_state.current_tab = 'H1'
-    st.session_state.guidance = "Welcome! Select a lab tab (H1-H5) to begin your module." 
+    st.session_state.current_tab = 'Intro' # Changed initial tab to Intro
+    st.session_state.guidance = "Welcome! Click the **🧭 Getting Started** tab to begin your module." 
     st.session_state.h1_step = 1 
     st.session_state.h4_results = pd.DataFrame() 
+    st.session_state.onboarding_done = False # New state for modal
 if 'assistant_chat_history' not in st.session_state:
-    st.session_state.assistant_chat_history = []
+    st.session_state.assistant_chat_history = [{"role": "assistant", "content": "👋 Hi there! I'm your AI Instructor. Ask me anything in simple terms about prompts, AI settings (like 'Temperature'), or what to do next!"}]
 if 'last_assistant_call' not in st.session_state:
     st.session_state.last_assistant_call = 0
 
@@ -41,7 +42,7 @@ if 'last_assistant_call' not in st.session_state:
 AI_API_URL = "https://api.cerebras.ai/v1/chat/completions"
 API_KEY_NAME = "CEREBRAS_API_KEY"
 
-# --- MODEL SELECTION (llama3.1-8b removed) ---
+# --- MODEL SELECTION ---
 DEFAULT_MODEL = "qwen-3-32b" 
 MODEL_OPTIONS = [
     DEFAULT_MODEL, 
@@ -132,6 +133,15 @@ div[data-testid*="stVerticalBlock"], div[data-testid*="stHorizontalBlock"], .stT
     font-weight: 800;
     font-size: 38px;
 }
+
+/* Progress Tracker Styling for Sidebar */
+.progress-tracker {
+    padding: 10px;
+    border-radius: 10px;
+    background-color: #ffffff;
+    border: 1px solid #ddd;
+    margin-bottom: 10px;
+}
 </style>
 """
 st.markdown(STYLING, unsafe_allow_html=True)
@@ -155,6 +165,11 @@ def update_progress(key, status):
 def update_guidance(message):
     """Updates the dynamic instruction message."""
     st.session_state.guidance = message
+
+def glossary_tooltip(term: str, definition: str):
+    """Helper for creating clickable tooltip-like text."""
+    # Added this missing function
+    return f'<span title="{definition}" style="cursor: pointer; border-bottom: 1px dotted #0d47a1;">{term} ℹ️</span>'
 
 def calculate_coherence_score(text):
     """
@@ -199,13 +214,12 @@ def save_to_journal(title, prompt, result, metrics=None):
     })
     
 def explain_llm_output(output):
-    """Simulated LLM summary for the learner."""
+    """Simulated LLM summary for the learner (Simplified)."""
     return "The AI Instructor has summarized the output: This response demonstrates the model's ability to generate text based on the given prompt. Analyze the metrics below to see its quality!"
 
 def get_h2_explanation(role, tone, metrics):
     """
-    Generates an AI explanation specific to the H2 Role Prompt Lab, 
-    including analysis of the generated metrics.
+    Generates an AI explanation specific to the H2 Role Prompt Lab.
     """
     
     flesch_score = metrics.get('flesch_score', 50)
@@ -244,28 +258,29 @@ def get_h2_explanation(role, tone, metrics):
 def llm_call_cerebras(messages, model=DEFAULT_MODEL, max_tokens=256, temperature=0.7):
     """Handles the secure API call to the AI Model provider with process explanation."""
     
-    API_READ_TIMEOUT = 60 # Increased to 60 seconds to mitigate 'Read timed out' errors
+    API_READ_TIMEOUT = 60
     
+    # Check for API Key (simplified for non-technical users)
     try:
         api_key = st.secrets[API_KEY_NAME] 
     except KeyError:
         if st.session_state.current_tab != 'Assistant':
-             st.error(f"API Error: {API_KEY_NAME} not configured in .streamlit/secrets.toml.")
-        return {"error": f"API Error: {API_KEY_NAME} not configured in .streamlit/secrets.toml."}
+             st.error(f"⚠️ **API Key Missing!** Please configure the **{API_KEY_NAME}** in your `secrets.toml` file to run the labs.")
+        return {"error": f"API Error: {API_KEY_NAME} not configured."}
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
 
-    # START: Process Explanation (Process is described dynamically)
+    # START: Process Explanation (Simplified for non-technical users)
     if st.session_state.current_tab in [f'H{i}' for i in range(1, 6)]:
         log_container = st.container(border=True)
-        log_container.subheader("Processing Output Steps")
+        log_container.subheader("💻 AI Model Processing Steps")
         
         steps = [
-            ("✅ Input Tokenized & Sent to AI Provider", "Your input is converted to tokens and securely transferred to the processing cluster."),
-            ("💻 Model (LLM) Processing", f"The chosen LLM ({model}) is loaded and the forward pass calculation begins."),
-            ("➡️ Generating Output Tokens Sequentially", "The model predicts the next token until the maximum length is reached."),
-            ("✨ Final Response Compilation", "Output tokens are reassembled into human-readable text."),
+            ("✅ Input Sent", "Your prompt is securely sent."),
+            ("💻 AI Model Working", f"The chosen model ({model}) is calculating the best response."),
+            ("➡️ Generating Words", "The model predicts the output word by word."),
+            ("✨ Response Ready", "The final text is compiled and returned to the dashboard."),
         ]
         
         for i, (msg, detail) in enumerate(steps):
@@ -282,7 +297,7 @@ def llm_call_cerebras(messages, model=DEFAULT_MODEL, max_tokens=256, temperature
         if response.status_code != 200:
             error_detail = response.json().get("message", response.text[:100])
             if st.session_state.current_tab in [f'H{i}' for i in range(1, 6)]:
-                log_container.error("🚨 API Connection Failed. Check your API Key and Model status.")
+                 log_container.error("🚨 **Error:** The AI connection failed. Please check your API Key or try a different model.")
             return {"error": f"API Call Failed ({response.status_code}): {error_detail}"}
 
         data = response.json()
@@ -291,7 +306,7 @@ def llm_call_cerebras(messages, model=DEFAULT_MODEL, max_tokens=256, temperature
         tokens_used = data.get("usage", {}).get("total_tokens", tokens_generated)
 
         if st.session_state.current_tab in [f'H{i}' for i in range(1, 6)]:
-            log_container.success("✅ Response received successfully.")
+             log_container.success("✅ Response received successfully.")
         
         time_to_generate = end_time - start_time
         throughput_tps = tokens_generated / time_to_generate if time_to_generate > 0 else 0
@@ -306,41 +321,180 @@ def llm_call_cerebras(messages, model=DEFAULT_MODEL, max_tokens=256, temperature
 
     except requests.exceptions.RequestException as e:
         if st.session_state.current_tab in [f'H{i}' for i in range(1, 6)]:
-            log_container.error(f"🚨 Network Error: {e}")
+             log_container.error(f"🚨 **Network/Timeout Error:** {e}. This usually means the request took too long.")
         return {"error": f"API Call Failed: {e}"}
 
 
-# --- 3. LAB DATA GENERATORS ---
-def generate_ai_timeline_data():
-    data = {'Milestone': ['Turing Test Proposed', 'Dartmouth Workshop (AI Coined)', 'Perceptron Invented', 'AI Winter Begins', 'Backpropagation Refined', 'Deep Blue Defeats Kasparov', 'ImageNet & Deep Learning Boom', 'AlphaGo Defeats Lee Sedol', 'Transformer Architecture (Attention)', 'Large Language Models (LLMs)'],
-            'Year': [1950, 1956, 1957, 1974, 1986, 1997, 2012, 2016, 2017, 2023],
-            'Type': ['Theory', 'Foundation', 'ML', 'Funding', 'DL', 'ML', 'DL', 'DL', 'Architecture', 'Application']}
-    return pd.DataFrame(data)
+# --- 3. ONBOARDING & GETTING STARTED DASHBOARD ---
 
-def generate_kmeans_data(n_samples=300, n_clusters=4):
-    X, y = make_blobs(n_samples=n_samples, centers=n_clusters, random_state=42)
-    df = pd.DataFrame(X, columns=['Feature A', 'Feature B'])
-    df['True Cluster'] = y
-    return df
+def show_onboarding_modal():
+    """1. Onboarding Modal (First Login) - Popup version."""
+    if not st.session_state.get("onboarding_done", False):
+        st.session_state["onboarding_done"] = True
+        st.toast("👋 Welcome to AI Prompt Engineering Explorer! Let's get started!", icon="🚀")
+
+        with st.popover("✨ **Welcome to the Explorer Lab! Click Here to Start!** ✨", use_container_width=True):
+            st.markdown("""
+                ### Here's Your Guided Flow:
+                1.  **Prompts (H1):** Learn what a prompt is and how the AI reacts. 💬
+                2.  **Refinement (H2):** Learn to give the AI a role and tone for better results. 🎭
+                3.  **Analysis (H3+):** Learn to measure and improve the quality of the AI's response. 📏
+                
+                Click the tabs (H1, H2, etc.) above to begin your hands-on training!
+            """)
+            st.progress(0.1, text="Loading Core Concepts...")
+
+
+def render_getting_started():
+    """
+    Creates the main dashboard view detailing H1 through H5 labs with
+    definitions, goals, and interactive elements.
+    """
+    st.markdown('<div class="title-header">🧭 Your Prompt Engineering Journey</div>', unsafe_allow_html=True)
+    st.markdown("---")
+    
+    st.header("💡 Module Overview: From Idea to Instruction")
+    st.info("""
+        This module teaches you **Prompt Engineering**—the art of talking to AI effectively. 
+        We move from basic instructions (H1) and adding personality (H2) to advanced techniques like controlling creativity (**Temperature**, H3), comparing prompts (H4), and hitting objective metrics (H5).
+    """)
+
+    # --- H1: EXPLORING YOUR FIRST PROMPT ---
+    st.markdown("---")
+    st.subheader("⚙️ H1: Exploring Your First Prompt 🚀 (The Basics)")
+    
+    col_def, col_goal = st.columns([1, 1])
+
+    with col_def:
+        st.markdown("#### What You'll Explore:")
+        st.markdown(f"""
+            - **Definition:** A **Prompt** is the direct instruction you give the AI. 
+            - **Key Concept:** You'll learn that even small changes to a prompt lead to big changes in the **Output** (the AI's response).
+            - **New Terms:** Learn about {glossary_tooltip('Temperature', 'The creativity dial. Low value = predictable. High value = random/creative.')} and **Latency** (the AI's thinking time).
+        """)
+
+    with col_goal:
+        st.markdown("#### The Goal:")
+        st.success("""
+            **Goal:** Successfully run your first prompt and understand the **direct cause-and-effect** between your words and the AI's output, including its speed.
+        """)
+        st.markdown("---")
+        st.markdown("#### Step-by-Step Guide Preview:")
+        st.progress(0.0, text="Step 1/3: Enter Prompt → Step 2/3: Run → Step 3/3: Analyze")
+            
+    # --- H2: ROLE PROMPT DESIGNER ---
+    st.markdown("---")
+    st.subheader("🎭 H2: Role Prompt Designer (Adding Personality)")
+    
+    col_def_2, col_goal_2 = st.columns([1, 1])
+
+    with col_def_2:
+        st.markdown("#### What You'll Explore:")
+        st.markdown(f"""
+            - **Definition:** A **Role Prompt** gives the AI a persona, like "Act as a pirate" or "You are a CEO."
+            - **Key Concept:** By adding **Role** and **Tone** (e.g., Formal, Humorous), you control the AI's personality, leading to better, more relevant outputs.
+            - **New Terms:** Learn how {glossary_tooltip('Readability Score', 'A metric (like Flesch) that measures how easy the text is for a general audience to read.')} changes based on the persona.
+        """)
+
+    with col_goal_2:
+        st.markdown("#### The Goal:")
+        st.success("""
+            **Goal:** Master prompt structure by forcing the AI to adopt a **specific role and tone**, demonstrating that the AI's style is fully controllable and measurable.
+        """)
+        st.markdown("---")
+        st.markdown("#### Step-by-Step Guide Preview:")
+        st.progress(0.0, text="Step 1/2: Select Role/Tone → Step 2/2: Run & Analyze Persona Shift")
+    
+    # --- H3: TEMPERATURE & CONTEXT LAB ---
+    st.markdown("---")
+    st.subheader("🌡️ H3: Temperature & Context Lab (Controlling Creativity)")
+    
+    col_def_3, col_goal_3 = st.columns([1, 1])
+
+    with col_def_3:
+        st.markdown("#### Core Definition:")
+        st.markdown(f"""
+            - **Definition:** {glossary_tooltip('Temperature', 'The creativity dial. Low value = predictable. High value = random/creative.')} dictates the randomness and creativity of the AI's output (its level of "wildness").
+            - **Key Concept:** You'll explore **Stochasticity** (the randomness in AI choices) by running the same prompt multiple times while changing the Temperature dial.
+            - **Hands-on Action:** You'll run an experiment (like writing a poem) at various Temperature settings (e.g., 0.2, 0.7, 1.5) and visualize the results.
+        """)
+
+    with col_goal_3:
+        st.markdown("#### The Goal:")
+        st.success("""
+            **Goal:** Develop intuition for the fundamental trade-off between **Creativity and Coherence** (does it make sense?), showing how randomness affects output quality. You'll know when to use low Temperature (for facts/code) and high Temperature (for brainstorming/poetry).
+        """)
+        st.markdown("---")
+        st.markdown("#### Step-by-Step Guide Preview:")
+        st.progress(0.0, text="Step 1/3: Set Temperature & Prompt → Step 2/3: Run Experiments → Step 3/3: Compare Outputs")
+        
+    # --- H4: MULTI-PROMPT COMPARISON STUDIO ---
+    st.markdown("---")
+    st.subheader("⭐ H4: Multi-Prompt Comparison Studio (Finding the Best Prompt)")
+    
+    col_def_4, col_goal_4 = st.columns([1, 1])
+
+    with col_def_4:
+        st.markdown("#### Core Definition:")
+        st.markdown(f"""
+            - **Definition:** **Prompt Comparison** is the simultaneous execution and objective scoring of several different prompts designed for the same objective.
+            - **Key Concept:** You'll use the **Coherence Score** (how logically consistent the text is) and your own **Manual Rating** (1-5 stars) to find the best prompt.
+            - **Hands-on Action:** Input 2–3 different ways to ask for the same thing (e.g., three prompts for explaining blockchain), run them in parallel, and rate the resulting outputs in a comparative table.
+        """)
+
+    with col_goal_4:
+        st.markdown("#### The Goal:")
+        st.success("""
+            **Goal:** Determine which prompt structure is **empirically superior** by scoring outputs based on both automatic metrics and your manual judgment. You'll learn to think like a reviewer, identifying the structural elements (specificity, clarity) that consistently produce high-quality AI results.
+        """)
+        st.markdown("---")
+        st.markdown("#### Step-by-Step Guide Preview:")
+        st.progress(0.0, text="Step 1/3: Write 3 Prompts → Step 2/3: Run & Score → Step 3/3: Analyze Results Table")
+
+    # --- H5: PROMPT OPTIMIZATION CHALLENGE ---
+    st.markdown("---")
+    st.subheader("🎯 H5: Prompt Optimization Challenge (Achieving Objective Control)")
+    
+    col_def_5, col_goal_5 = st.columns([1, 1])
+
+    with col_def_5:
+        st.markdown("#### Core Definition:")
+        st.markdown(f"""
+            - **Definition:** **Prompt Optimization** is the iterative process of refining a prompt until its output meets specific, measurable quality standards or **Target Thresholds**.
+            - **Key Concept:** This is a test of your ability to control complexity ({glossary_tooltip('Readability', 'A metric (like Flesch) that measures how easy the text is for a general audience to read.')}) and length (**Tokens**).
+            - **Hands-on Action:** Set targets (e.g., Readability > 80, Tokens < 50), write an initial prompt, run it, analyze the metrics, and refine your prompt until you pass both targets.
+        """)
+
+    with col_goal_5:
+        st.markdown("#### The Goal:")
+        st.success("""
+            **Goal:** Iteratively refine your prompt to hit **two objective targets simultaneously**. You'll gain confidence in designing, testing, and controlling AI output independently, culminating in the completion of your Prompt Engineering Foundations Module.
+        """)
+        st.markdown("---")
+        st.markdown("#### Step-by-Step Guide Preview:")
+        st.progress(0.0, text="Step 1/4: Set Targets → Step 2/4: Write Prompt → Step 3/4: Run & Check Metrics → Step 4/4: Refine & Repeat")
+
+    st.markdown("---")
+    st.markdown("### Ready to start? Click on the **H1: First Prompt 🚀** tab above!")
 
 
 # --- 4. LAB IMPLEMENTATION FUNCTIONS (H1 - H5) ---
 
+# The bodies of the render_labX functions are kept as provided in the prompt.
 def render_lab1():
     st.header("H1: Exploring Your First Prompt 🚀")
     st.markdown("##### **Goal:** Learn how to write a single, effective prompt and observe the **AI Model's** response behavior.")
     
     with st.expander("📝 Instructions: Definition & Process", expanded=True):
         st.markdown("""
-        **What is a Prompt?** A prompt is simply the *input* (text, command, or question) you provide to a Large Language Model (LLM) to guide its output and define its task.
+        **What is a Prompt?** A **prompt** is simply the *message* or *instruction* you give to the AI to tell it what to do. Think of it as sending a text message to a highly intelligent assistant!
 
-        **Metrics Explained:**
-        * **Latency (Time-to-Generate):** The total time (in seconds) it takes from sending the request to receiving the final byte of the response. **(Lower is better)**.
-        * **Throughput (TPS):** The number of Tokens Generated Per Second (Tokens / Latency). **(Higher is better)**.
+        **Metrics Explained (The AI's Speed):**
+        * **Latency (Time-to-Generate):** How many seconds the AI takes to think and write the full answer. **(Lower is better)**.
+        * **Throughput (TPS):** The speed at which the AI writes, measured in Words (or Tokens) Per Second. **(Higher is better)**.
 
-        **Action (Step 1):** Write your prompt in the text area below. Try a clear command like: **"Explain how gravity works in a single paragraph."**
-        **Action (Step 2):** Click the **Run Prompt** button to execute the task on the AI Model.
-        **Learning Outcome:** You will see the AI's response and understand the direct relationship between your input and the model's output.
+        **Action (Step 1):** Write your prompt. Try a simple command like: **"Explain how gravity works in a single paragraph."**
+        **Action (Step 2):** Click **Run Prompt** to see the magic happen!
         """)
     
     if 'h1_result' not in st.session_state:
@@ -362,15 +516,15 @@ def render_lab1():
         st.session_state.h1_performance_df = pd.DataFrame(columns=['Metric', 'Value'])
     
     # --- Model Selection (Use a clear model selection for the lab) ---
-    with st.expander("⚙️ Adjust Model Parameters"):
+    with st.expander("⚙️ Adjust AI Dials (Advanced Settings)"):
         col1, col2, col3 = st.columns(3)
         with col1:
             # Use the defined MODEL_OPTIONS list
-            model = st.selectbox("Model:", MODEL_OPTIONS, index=0, key='h1_model')
+            model = st.selectbox("Model:", MODEL_OPTIONS, index=0, key='h1_model', help="The specific AI engine you are using.")
         with col2:
-            temp = st.slider("Temperature (Creativity):", 0.0, 1.0, 0.7, 0.05, key='h1_temp')
+            temp = st.slider("Temperature (Creativity):", 0.0, 1.0, 0.7, 0.05, key='h1_temp', help="Controls randomness. 0.0 is very predictable. 1.0 is very creative/random.")
         with col3:
-            max_t = st.slider("Max Tokens:", 50, 512, 250, key='h1_max_t')
+            max_t = st.slider("Max Tokens (Max Length):", 50, 512, 250, key='h1_max_t', help="Sets the maximum number of words the AI can write in its response.")
             
     st.markdown("---")
     
@@ -388,30 +542,30 @@ def render_lab1():
                 temperature=temp, 
                 max_tokens=max_t
             )
-        
-        st.session_state.h1_result = result
-        st.session_state.h1_reflection = "" # Reset reflection
-        
-        if 'content' in result:
-            # Calculate metrics and store in DataFrame
-            metrics = analyze_text_metrics(result['content'])
             
-            data = {
-                'Metric': ['Model', 'Latency (s)', 'Throughput (TPS)', 'Tokens Generated', 'Flesch Readability'],
-                'Value': [
-                    result['model'], 
-                    f"{result['latency']:.3f}", 
-                    f"{result['throughput_tps']:.2f}", 
-                    metrics['tokens'], 
-                    metrics['flesch_score']
-                ]
-            }
-            st.session_state.h1_performance_df = pd.DataFrame(data)
+            st.session_state.h1_result = result
+            st.session_state.h1_reflection = "" # Reset reflection
+            
+            if 'content' in result:
+                # Calculate metrics and store in DataFrame
+                metrics = analyze_text_metrics(result['content'])
+                
+                data = {
+                    'Metric': ['Model', 'Latency (s)', 'Throughput (TPS)', 'Tokens Generated', 'Flesch Readability'],
+                    'Value': [
+                        result['model'], 
+                        f"{result['latency']:.3f}", 
+                        f"{result['throughput_tps']:.2f}", 
+                        metrics['tokens'], 
+                        metrics['flesch_score']
+                    ]
+                }
+                st.session_state.h1_performance_df = pd.DataFrame(data)
 
-            update_guidance("✅ Step 2 Complete! Now, observe the AI's response and performance metrics.")
-        
-        update_progress('H1', '🟢')
-        st.rerun()
+                update_guidance("✅ H1 Step 2 Complete! Now, observe the AI's response and performance metrics.")
+            
+            update_progress('H1', '🟢')
+            st.rerun()
 
     # --- Step 3: Output and Reflection ---
     if st.session_state.h1_result:
@@ -431,7 +585,7 @@ def render_lab1():
             
             summary = explain_llm_output(st.session_state.h1_result['content'])
             st.subheader("🧠 AI Instructor Summary")
-            st.success(f"{summary}\n\n**Performance Insight:** This model generated **{metrics_df.loc['Tokens Generated', 'Value']} tokens** in **{latency} seconds**, resulting in a strong throughput of **{throughput} TPS**.")
+            st.success(f"{summary}\n\n**Performance Insight:** This model generated **{metrics_df.loc['Tokens Generated', 'Value']} tokens** in **{latency} seconds**, resulting in a strong speed (throughput) of **{throughput} TPS**.")
             
             st.markdown("---")
             st.subheader("4. Your Reflection & Insights")
@@ -452,7 +606,7 @@ def render_lab1():
                 
         elif 'error' in st.session_state.h1_result:
             st.error(st.session_state.h1_result['error'])
-        
+            
 def render_lab2():
     st.header("H2: Role Prompt Designer 🎭")
     st.markdown("##### **Definition:** A **Role Prompt** assigns a persona, expertise, or identity to the LLM (e.g., 'Act as a doctor').")
@@ -538,11 +692,11 @@ def render_lab3():
     st.subheader("1. Parameters and Prompt")
     col1, col2 = st.columns(2)
     with col1:
-        temp = st.slider("Temperature (0.0 - 1.5):", 0.0, 1.5, 0.7, 0.1, key='h3_temp')
+        temp = st.slider("Temperature (0.0 - 1.5):", 0.0, 1.5, 0.7, 0.1, key='h3_temp', help="Low value = predictable. High value = random/creative.")
         st.caption("0.0 = Predictable/Coherent; 1.5 = Highly Creative/Random.")
     with col2:
         context_options = ['Short (50 tokens)', 'Medium (200 tokens)', 'Long (500 tokens)']
-        context_len = st.radio("Context Length (Simulated):", context_options, key='h3_context')
+        context_len = st.radio("Context Length (Max Words):", context_options, key='h3_context', help="This simulates setting the maximum word count for the AI's response.")
         
         match = re.search(r'\((\d+)', context_len)
         max_t = int(match.group(1)) if match else 200
@@ -594,12 +748,12 @@ def render_lab3():
             max_temp = history_df['temp'].max()
             
             summary_message = f"""
-            The **Temperature vs. Token Count** chart visualizes the effects of stochasticity (randomness). 
-            * **X-axis (Temperature):** Shows how much randomness was introduced. As this value increases, the model's choices become more diverse, leading to **greater output variation**.
-            * **Y-axis (Token Count):** Shows the length of the response.
-            * **Bubble Size (Readability/Flesch Score):** The size of the bubble indicates how easy the text is to read.
+            The **Temperature vs. Token Count** chart shows how the AI's settings change the output. 
+            * **X-axis (Temperature):** This shows how **creative** (random) the AI was.
+            * **Y-axis (Token Count):** This shows how **long** the response was.
+            * **Bubble Size (Readability):** Bigger bubbles mean the text is **easier to read**.
             
-            **Key Insight:** Generally, experiments run with **low temperatures** (closer to 0.0) cluster lower on the diversity scale but often have **higher readability** (larger bubbles), while experiments run with **high temperatures** (closer to {max_temp}) show more unique results but sometimes lower coherence. This highlights the fundamental trade-off in generative AI.
+            **Key Insight:** When you set a **low temperature** (closer to 0.0), the AI is more predictable and the results are often more similar. When you use a **high temperature** (closer to {max_temp}), the outputs are very different and more creative, but sometimes less focused or "coherent."
             """
             st.success(summary_message)
 
@@ -624,8 +778,8 @@ def render_lab4():
 
     col_run, col_param = st.columns([1, 2])
     with col_param:
-        temp = st.slider("Temperature:", 0.0, 1.0, 0.5, 0.1, key='h4_temp')
-        max_t = st.slider("Max Tokens:", 100, 400, 250, key='h4_max_t')
+        temp = st.slider("Temperature:", 0.0, 1.0, 0.5, 0.1, key='h4_temp', help="A neutral temperature for fair comparison.")
+        max_t = st.slider("Max Tokens:", 100, 400, 250, key='h4_max_t', help="A consistent length ensures fair comparison.")
 
     if col_run.button("Run All Prompts in Parallel (Step 2)", key='h4_run', type='primary'):
         valid_prompts = [p for p in st.session_state.h4_prompts if p.strip()]
@@ -652,14 +806,14 @@ def render_lab4():
                         'Manual Rating': 3 
                     })
                 else:
-                     st.error(f"Prompt {i+1} failed: {result['error']}")
+                    st.error(f"Prompt {i+1} failed: {result['error']}")
             
             # --- RATE LIMIT MITIGATION ---
             if i < len(valid_prompts) - 1: # Don't sleep after the last prompt
-                st.info(f"Adding 3-second delay to avoid rate-limiting (429 errors). Resuming in 3 seconds...")
+                st.info(f"Adding 3-second delay to avoid service interruption. Resuming in 3 seconds...")
                 time.sleep(3)
             # ---------------------------------
-        
+            
         if results:
             st.session_state.h4_results = pd.DataFrame(results) 
             update_progress('H4', '🟡') 
@@ -672,7 +826,9 @@ def render_lab4():
         
         rating_inputs = []
         for i, row in results_df.iterrows():
-            rating = st.slider(f"Prompt {row['Prompt ID']} Rating (1-5):", 1, 5, int(row.get('Manual Rating', 3)), key=f'h4_rate_{row["Prompt ID"]}')
+            # Use the Manual Rating column from the DataFrame, or default to 3
+            initial_rating = int(row.get('Manual Rating', 3)) 
+            rating = st.slider(f"Prompt {row['Prompt ID']} Rating (1=Poor, 5=Excellent):", 1, 5, initial_rating, key=f'h4_rate_{row["Prompt ID"]}')
             rating_inputs.append(rating)
         results_df['Manual Rating'] = rating_inputs
 
@@ -688,19 +844,20 @@ def render_lab4():
             st.info(f"""
             Based on your ratings and the calculated metrics:
             * **Best Performer:** Prompt **#{best_prompt_id}** was manually rated the highest.
-            * **Key Metric:** The highest calculated Coherence Score was **{best_coherence}**.
-            * **Conclusion:** The prompt that yields the highest scores is typically the most specific and clearly structured. Use the best-performing prompt's structure as a template for future labs.
+            * **Key Metric:** The highest calculated **Coherence Score** (how much it makes sense) was **{best_coherence}**.
+            * **Conclusion:** The prompt that won is likely the one that was most **specific** and **clearly structured**. Use that winning structure as a template!
             """)
         # --- End Post-Comparison Summary ---
 
         if st.button("Save & Complete Lab H4", key='h4_complete'):
             for _, row in results_df.iterrows():
-                save_to_journal(f"H4 Comparison Prompt {row['Prompt ID']}", row['Prompt Text'], row['Response'], 
+                # Save each prompt comparison result to the journal
+                save_to_journal(f"H4 Comparison Prompt {row['Prompt ID']}", st.session_state.h4_prompts[row['Prompt ID']-1], {'content': row['Response']}, 
                                  {'Coherence Score': row['Coherence Score'], 'Manual Rating': row['Manual Rating']})
             update_progress('H4', '🟢')
             st.success("H4 Complete! Results saved to Learning Journal.")
             update_guidance("✅ H4 Complete! Move to H5: Prompt Optimization Challenge.")
-            st.experimental_rerun()
+            st.rerun()
 
 
 def render_lab5():
@@ -715,11 +872,11 @@ def render_lab5():
         **Learning Outcome:** Practice systematic prompt refinement to achieve objective, metric-based goals.
         """)
 
-    target_flesch = st.slider("Target Readability (Flesch Score):", 60, 100, 80, key='h5_target_flesch')
-    target_tokens = st.slider("Max Token Limit:", 20, 100, 50, key='h5_target_tokens')
+    target_flesch = st.slider("Target Readability (Easy-to-Read Score):", 60, 100, 80, key='h5_target_flesch', help="A higher Flesch Score means the text is easier for a general audience to read.")
+    target_tokens = st.slider("Max Token Limit (Max Words):", 20, 100, 50, key='h5_target_tokens', help="Your response must be shorter than this number of words.")
 
     st.subheader("1. The Challenge")
-    st.info(f"Challenge: Write a prompt that results in a definition of AI with a Readability Score **above {target_flesch}** and a Token Count **below {target_tokens}**.")
+    st.info(f"Challenge: Write a prompt that forces the AI to be **simple** and **concise**. The output must have a Readability Score **above {target_flesch}** AND a Token Count **below {target_tokens}**.")
     
     prompt = st.text_area("Your Optimization Prompt:", "Define Artificial Intelligence.", height=100, key='h5_prompt')
     
@@ -733,7 +890,8 @@ def render_lab5():
 
         with st.spinner("Running optimization attempt..."):
             messages = [{"role": "user", "content": prompt}]
-            result = llm_call_cerebras(messages, max_tokens=target_tokens, model=DEFAULT_MODEL) 
+            # Use the target_tokens as max_tokens for the LLM call
+            result = llm_call_cerebras(messages, max_tokens=target_tokens, model=DEFAULT_MODEL, temperature=0.3) 
             
             if 'content' in result:
                 metrics = analyze_text_metrics(result['content'])
@@ -769,13 +927,13 @@ def render_lab5():
             st.balloons()
             st.success(f"🥳 CHALLENGE PASSED on Attempt {last_attempt['id']}! Metrics met the target.")
         else:
-            st.error(f"❌ Attempt {last_attempt['id']} Failed. Adjust your prompt and try again.")
+            st.error(f"❌ Attempt {last_attempt['id']} Failed. Analyze the metrics below and adjust your prompt and click 'Run Attempt' again.")
         
         col_f, col_t = st.columns(2)
-        col_f.metric(f"Current Readability (Target > {target_flesch})", last_attempt['flesch_score'], 
-                     delta_color='normal' if last_attempt['flesch_score'] >= target_flesch else 'inverse')
-        col_t.metric(f"Current Tokens (Target < {target_tokens})", last_attempt['tokens'],
-                     delta_color='normal' if last_attempt['tokens'] <= target_tokens else 'inverse')
+        col_f.metric(f"Current Readability (Target $\geq$ {target_flesch})", last_attempt['flesch_score'], 
+                     delta_color='normal' if last_attempt['flesch_score'] >= target_flesch else 'inverse', delta="Needs to be simple!")
+        col_t.metric(f"Current Tokens (Target $\leq$ {target_tokens})", last_attempt['tokens'],
+                     delta_color='normal' if last_attempt['tokens'] <= target_tokens else 'inverse', delta="Needs to be short!")
         
         st.markdown("---")
         st.code(last_attempt['response'], language='markdown')
@@ -787,51 +945,89 @@ def render_lab5():
                       color_discrete_map={'flesch_score': '#0d47a1', 'tokens': '#B8860B'})
         st.plotly_chart(fig, use_container_width=True)
 
+def render_learning_journal():
+    st.header("📘 Learning Journal & Progress")
+    st.markdown("##### **Goal:** Review and reflect on the key experiments you've run in each lab.")
+    st.markdown("---")
+    
+    st.subheader("Your Module Progress")
+    progress_percent = get_progress_percent()
+    st.progress(progress_percent, text=f"Module Completion: **{progress_percent}%**")
+    
+    cols = st.columns(5)
+    for i in range(1, 6):
+        lab_key = f'H{i}'
+        status = get_progress_badge(lab_key)
+        cols[i-1].metric(f"Lab {i}", f"{lab_key} Status", status)
+        
+    st.markdown("---")
+    
+    st.subheader("Saved Experiments & Reflections")
+    if st.session_state.journal:
+        # Reverse the journal to show the newest entries first
+        reversed_journal = st.session_state.journal[::-1]
+        for entry in reversed_journal:
+            with st.expander(f"**[{entry['timestamp'].split(' ')[0]}] {entry['lab']}: {entry['title']}**", expanded=False):
+                st.markdown(f"**Prompt Used:**")
+                st.code(entry['prompt'], language='markdown')
+                st.markdown(f"**AI Response:**")
+                st.info(entry['result'].get('content', 'N/A'))
+                
+                if 'reflection' in entry['metrics']:
+                    st.markdown(f"**Your Reflection:** *{entry['metrics']['reflection']}*")
+                
+                if entry['metrics']:
+                    st.markdown(f"**Metrics:** {entry['metrics']}")
+    else:
+        st.info("Your journal is empty! Start with the H1 lab to save your first experiment.")
 
-# --- 5. AI ASSISTANT FUNCTION (LLM INTEGRATED) ---
+
+# --- 5. AI ASSISTANT FUNCTION (LLM INTEGRATED - REFINED) ---
 
 def render_ai_assistant_sidebar():
-    """Renders the persistent AI Assistant and Learning Journal in the sidebar, now powered by LLM."""
+    """Renders the persistent AI Assistant and Progress Tracker in the sidebar."""
     
-    st.sidebar.markdown('<div class="sidebar-assistant">', unsafe_allow_html=True)
+    # 1. Progress Tracker
+    st.sidebar.markdown('<div class="progress-tracker">', unsafe_allow_html=True)
+    st.sidebar.markdown("#### 🎯 Your Learning Progress")
+    progress_percent = get_progress_percent()
+    st.sidebar.progress(progress_percent, text=f"**Module Complete: {progress_percent}%**")
     
-    # 1. Guidance Message Display
+    lab_statuses = [f"**{k}** {v}" for k, v in st.session_state.progress.items()]
+    st.sidebar.caption(f"Status: {' | '.join(lab_statuses)}")
+    
+    # 2. Guidance Message Display
     guidance_message = st.session_state.get('guidance', "Welcome! Select a lab tab (H1-H5) to begin your module.")
-    st.sidebar.markdown('**Current Task:**')
+    st.sidebar.markdown('**Current Goal:**')
     st.sidebar.info(guidance_message)
     st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
-    # 2. AI Assistant Chat Interface
+    # 3. AI Assistant Chat Interface
     st.sidebar.markdown("---")
-    st.sidebar.markdown("#### Ask the AI Assistant")
+    st.sidebar.markdown("#### 💬 AI Instructor Chatbot")
+    st.sidebar.caption("Ask simple, non-technical questions here!")
     
-    # Predefined System Context for the AI Assistant
+    # Predefined System Context for the AI Assistant (Simplified)
     SYSTEM_PROMPT = """
-    You are the **AI Instructor Assistant** for the 'AI + Prompt Engineering Foundations' lab module. 
-    Your role is to guide the user through the lab activities, define concepts, and provide troubleshooting tips related to the dashboard.
+    You are the **AI Instructor Assistant** for absolute beginners learning Prompt Engineering. 
+    Your tone must be non-technical, extremely simple, and encouraging. 
+    Your goal is to define concepts (like 'What is Temperature?'), suggest next steps, and give simple troubleshooting help.
     
-    The user is currently working on a Streamlit application with the following lab tabs:
-    - H1: Exploring Your First Prompt (Goal: Observe basic prompt output, latency, and throughput).
-    - H2: Role Prompt Designer (Goal: Understand how 'Role' and 'Tone' constraints steer the LLM's personality).
-    - H3: Temperature & Context Lab (Goal: Explore the creativity/coherence trade-off using the 'Temperature' parameter).
-    - H4: Multi-Prompt Comparison Studio (Goal: Compare multiple prompts using metrics like Coherence Score and Manual Rating).
-    - H5: Prompt Optimization Challenge (Goal: Iteratively refine a prompt to meet specific metric targets, like Readability and Token count).
+    The user is currently working on labs H1 through H5 (Exploring Prompts, Roles, Temperature, Comparison, Optimization).
     
-    **Instructions for your response:**
-    1. Be concise, encouraging, and highly relevant to the lab context.
-    2. If asked 'What should I do next?' or a similar question, guide them to the next logical step based on the lab flow (H1 -> H2, H2 -> H3, etc.).
-    3. If asked for a definition (e.g., 'what is prompt engineering'), provide a clear, one or two-sentence summary.
-    4. Do NOT execute any external code or API calls yourself. The user will do this in the main app.
-    5. Always maintain a helpful, encouraging tone.
+    **Example Responses (Use simple analogies):**
+    - "What is a prompt?": "A prompt is like a **text message** you send to the AI telling it exactly what you want it to do."
+    - "What is Temperature?": "Temperature is the **creativity dial**. Low temperature means predictable answers, high temperature means wild and creative answers!"
+    - "What should I do now?": "You just finished H1! You should now click the **H2: Role Prompt Designer** tab to try giving the AI a personality."
     """
     
     user_query = st.sidebar.text_input("Ask about the module, steps, or concepts:", key="assistant_query")
     
-    if st.sidebar.button("Ask Assistant", key="run_assistant"):
+    if st.sidebar.button("Ask Instructor", key="run_assistant"):
         
-        # --- NEW ASSISTANT COOLDOWN CHECK ---
+        # --- ASSISTANT COOLDOWN CHECK ---
         if time.time() - st.session_state.last_assistant_call < 5:
-            st.sidebar.error("Please wait 5 seconds before asking the Assistant another question to avoid rate-limiting (429 errors).")
+            st.sidebar.error("Please wait 5 seconds before asking the Assistant another question.")
             return
         # ------------------------------------
 
@@ -851,7 +1047,7 @@ def render_ai_assistant_sidebar():
                 # 2. Call the LLM 
                 assistant_result = llm_call_cerebras(
                     messages=messages, 
-                    model=DEFAULT_MODEL, # Use the new default model
+                    model=DEFAULT_MODEL, 
                     max_tokens=256, 
                     temperature=0.2 
                 )
@@ -865,7 +1061,7 @@ def render_ai_assistant_sidebar():
             if 'content' in assistant_result:
                 response = assistant_result['content']
             elif 'error' in assistant_result:
-                response = f"**Assistant Error:** Sorry, I encountered an issue: {assistant_result['error']}. This may indicate an issue with your API key or the model status. The code has been updated with a longer timeout and cooldowns to mitigate rate limits. Please try again soon."
+                response = f"**Assistant Error:** Sorry, I encountered a connection issue. Please check your API key or try again in a minute."
             else:
                 response = "I'm experiencing a service interruption. Please try again in a moment."
 
@@ -873,17 +1069,17 @@ def render_ai_assistant_sidebar():
             st.session_state.assistant_chat_history.append({"role": "assistant", "content": response})
             st.rerun() 
 
-    # 3. Display Chat History
+    # 4. Display Chat History
     for message in st.session_state.assistant_chat_history:
         if message['role'] == 'user':
             st.sidebar.markdown(f'<div class="user-message">**You:** {message["content"]}</div>', unsafe_allow_html=True)
         elif message['role'] == 'assistant':
-            st.sidebar.markdown(f'<div class="assistant-message">**Assistant:** {message["content"]}</div>', unsafe_allow_html=True)
+            st.sidebar.markdown(f'<div class="assistant-message">**Instructor:** {message["content"]}</div>', unsafe_allow_html=True)
 
     
-    # 4. Reset Button
+    # 5. Reset Button
     st.sidebar.markdown("---")
-    if st.sidebar.button("Reset All Lab Progress (Clear Session) ⚠️", type='secondary'):
+    if st.sidebar.button("Reset All Lab Progress ⚠️", type='secondary'):
         # Clear all session state keys
         for key in list(st.session_state.keys()):
              del st.session_state[key]
@@ -892,12 +1088,13 @@ def render_ai_assistant_sidebar():
         st.session_state.progress = {f'H{i}': '🔴' for i in range(1, 6)} 
         st.session_state.journal = []
         st.session_state.lab_results = {}
-        st.session_state.current_tab = 'H1'
+        st.session_state.current_tab = 'Intro' # Reset to Intro
         st.session_state.guidance = "Welcome! Select a lab tab (H1-H5) to begin your module." 
         st.session_state.h1_step = 1 
         st.session_state.h4_results = pd.DataFrame() 
-        st.session_state.assistant_chat_history = []
-        st.session_state.last_assistant_call = 0 # Reset cooldown timer
+        st.session_state.onboarding_done = False
+        st.session_state.assistant_chat_history = [{"role": "assistant", "content": "👋 Hi there! I'm your AI Instructor. Ask me anything in simple terms about prompts, AI settings (like 'Temperature'), or what to do next!"}]
+        st.session_state.last_assistant_call = 0 
         
         st.success("Session cleared. Please refresh the browser.")
         st.rerun()
@@ -906,34 +1103,44 @@ def render_ai_assistant_sidebar():
 # --- 6. MAIN APPLICATION ENTRY POINT ---
 
 def render_main_page():
+    
+    # 3. Onboarding Modal (Must be called early)
+    show_onboarding_modal()
+    
     # Final App Title (Enhanced)
     st.markdown('<div class="title-header">Module 1: AI + Prompt Engineering Foundations</div>', unsafe_allow_html=True)
     st.markdown("---")
 
-    # Tab Titles
+    # Tab Titles - Added Getting Started Tab
     tab_titles = [
-        "H1: Exploring Your First Prompt 🚀", "H2: Role Prompt Designer 🎭", 
-        "H3: Temperature & Context Lab 🌡️", "H4: Multi-Prompt Comparison Studio ⭐", 
-        "H5: Prompt Optimization Challenge 🎯"
+        "🧭 Getting Started", "H1: First Prompt 🚀", "H2: Role Designer 🎭", 
+        "H3: Temp & Context 🌡️", "H4: Comparison ⭐", 
+        "H5: Optimization 🎯", "📘 Learning Journal"
     ]
     tabs = st.tabs(tab_titles)
     
     # Content Rendering
     with tabs[0]:
+        st.session_state.current_tab = 'Intro'
+        render_getting_started()
+    with tabs[1]:
         st.session_state.current_tab = 'H1'
         render_lab1()
-    with tabs[1]:
+    with tabs[2]:
         st.session_state.current_tab = 'H2'
         render_lab2()
-    with tabs[2]:
+    with tabs[3]:
         st.session_state.current_tab = 'H3'
         render_lab3()
-    with tabs[3]:
+    with tabs[4]:
         st.session_state.current_tab = 'H4'
         render_lab4()
-    with tabs[4]:
+    with tabs[5]:
         st.session_state.current_tab = 'H5'
         render_lab5()
+    with tabs[6]:
+        st.session_state.current_tab = 'Journal'
+        render_learning_journal()
 
 if __name__ == '__main__':
     render_ai_assistant_sidebar()
